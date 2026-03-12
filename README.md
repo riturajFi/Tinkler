@@ -1,29 +1,61 @@
 # Tinkler
 
-Minimal LangGraph repo agent for inspecting a codebase, deciding one action at a time, collecting observations, and writing a final artifact only after the loop is complete.
+<p align="center">
+  <strong>A repo agent that thinks in loops, not scripts.</strong>
+</p>
 
-## Why This Repo Exists
+<p align="center">
+  Tinkler uses LangGraph to inspect a codebase, choose one action at a time, collect evidence, and only write once it has enough signal.
+</p>
 
-Most repo agents are too rigid:
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.11%2B-0f172a?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.11+">
+  <img src="https://img.shields.io/badge/LangGraph-Agent%20Loop-1d4ed8?style=for-the-badge" alt="LangGraph Agent Loop">
+  <img src="https://img.shields.io/badge/OpenAI-Structured%20Decisions-16a34a?style=for-the-badge" alt="OpenAI Structured Decisions">
+</p>
 
-- inspect in a fixed order
-- summarize too early
-- write before they have enough evidence
+---
 
-Tinkler is built around a tighter control loop:
+## The Pitch
 
-`think -> act -> observe -> decide again`
+Most repo agents still behave like this:
 
-That makes it better suited to uneven repositories where the important clue might be in `pyproject.toml`, a test file, a shell script, or a nested package.
+```text
+inspect -> summarize -> write
+```
 
-## Visual Overview
+That looks neat, but it breaks as soon as the repo stops being neat.
+
+Tinkler is built around a tighter loop:
+
+```text
+context -> decide -> tool -> observe -> loop -> finalize
+```
+
+It does not assume where the truth lives. It finds it.
+
+---
+
+## Why It Feels Different
+
+| Traditional Repo Agent | Tinkler |
+| --- | --- |
+| follows a fixed inspection order | adapts every turn |
+| plans too much up front | chooses one action at a time |
+| writes early | stages writes and applies them at the end |
+| treats tool output as terminal | turns tool output into new context |
+| fragile on odd repo layouts | works better on uneven, real-world codebases |
+
+---
+
+## Architecture At A Glance
 
 ```mermaid
 flowchart TD
-    A([Start]) --> B[init_turn]
+    A([User Request]) --> B[init_turn]
     B --> C[build_agent_context]
     C --> D[agent_decide]
-    D --> E[route_agent_action]
+    D --> E{route_agent_action}
 
     E -->|shell_command| F[shell_command]
     E -->|read_file| G[read_file]
@@ -42,73 +74,48 @@ flowchart TD
     L -->|loop| D
     L -->|stop| M[finalize_answer]
     M --> N[apply_file_write]
-    N --> O([End])
+    N --> O([Done])
 
-    classDef phase fill:#0f172a,stroke:#38bdf8,color:#e2e8f0,stroke-width:1.5px;
-    classDef tool fill:#1e293b,stroke:#f59e0b,color:#f8fafc,stroke-width:1.5px;
-    classDef gate fill:#3f3f46,stroke:#34d399,color:#f8fafc,stroke-width:1.5px;
+    classDef core fill:#0b1220,stroke:#60a5fa,color:#eff6ff,stroke-width:1.5px;
+    classDef tools fill:#1f2937,stroke:#f59e0b,color:#fff7ed,stroke-width:1.5px;
+    classDef gates fill:#14532d,stroke:#4ade80,color:#f0fdf4,stroke-width:1.5px;
 
-    class B,C,D,M phase;
-    class F,G,H,I,J tool;
-    class E,K,L,N gate;
+    class B,C,D,M core;
+    class F,G,H,I,J tools;
+    class E,K,L,N gates;
 ```
 
-## Control Loop
+---
+
+## The Core Loop
 
 ```mermaid
 flowchart LR
-    A[Build Context] --> B[Model Chooses One Action]
+    A[Build Context] --> B[Choose One Action]
     B --> C[Run Tool]
-    C --> D[Record Observation]
-    D --> E{Enough Information?}
-    E -->|No| B
-    E -->|Yes| F[Finalize Answer]
-    F --> G[Apply Staged Write]
+    C --> D[Capture Result]
+    D --> E[Update Working Summary]
+    E --> F{Stop Yet?}
+    F -->|No| B
+    F -->|Yes| G[Generate Final Answer]
+    G --> H[Apply Staged Write]
 
-    classDef loop fill:#111827,stroke:#60a5fa,color:#f9fafb,stroke-width:1.5px;
-    classDef result fill:#1f2937,stroke:#f97316,color:#f9fafb,stroke-width:1.5px;
+    classDef dark fill:#111827,stroke:#93c5fd,color:#f9fafb,stroke-width:1.5px;
+    classDef accent fill:#3f3f46,stroke:#fbbf24,color:#fffbeb,stroke-width:1.5px;
 
-    class A,B,D,E loop;
-    class C,F,G result;
+    class A,B,D,E,F dark;
+    class C,G,H accent;
 ```
 
-## Architecture
+This is the whole design: every action earns the next action.
 
-### State
+---
 
-The agent keeps a typed state object with:
-
-- request and repo root
-- turn counters and stop conditions
-- working summary
-- tool history
-- observations
-- discovered files and directories
-- likely entrypoints
-- repo facts
-- pending write path and content
-- final response
-
-Core definition: [`agent/state.py`](agent/state.py)
-
-### Graph
-
-The graph is compiled in [`agent/graph.py`](agent/graph.py) and wires the execution order like this:
-
-1. Initialize turn state.
-2. Build prompt context from everything learned so far.
-3. Ask the model for exactly one next action.
-4. Route that action to the correct tool node.
-5. Record the result as an observation.
-6. Decide whether to loop or stop.
-7. Generate the final answer.
-8. Apply the staged file write.
-
-### Available Actions
+## Agent Surface
 
 ```mermaid
 flowchart TD
-    A[Agent Actions] --> B[shell_command]
+    A[Decision Model] --> B[shell_command]
     A --> C[read_file]
     A --> D[list_dir]
     A --> E[search_files]
@@ -116,74 +123,90 @@ flowchart TD
     A --> G[finish]
 
     B --> B1[terminal exploration]
-    C --> C1[targeted file reads]
-    D --> D1[structured directory scan]
-    E --> E1[symbol and text discovery]
-    F --> F1[stage content]
-    F --> F2[defer write until end]
-    G --> G1[stop the loop]
+    C --> C1[targeted file inspection]
+    D --> D1[structured tree discovery]
+    E --> E1[text and symbol lookup]
+    F --> F1[stage artifact for later write]
+    G --> G1[exit loop]
 
-    classDef core fill:#111827,stroke:#60a5fa,color:#f9fafb,stroke-width:1.5px;
-    classDef detail fill:#1f2937,stroke:#f59e0b,color:#f9fafb,stroke-width:1.5px;
+    classDef root fill:#172554,stroke:#60a5fa,color:#eff6ff,stroke-width:1.5px;
+    classDef leaf fill:#1f2937,stroke:#f97316,color:#fff7ed,stroke-width:1.5px;
 
-    class A,B,C,D,E,F,G core;
-    class B1,C1,D1,E1,F1,F2,G1 detail;
+    class A,B,C,D,E,F,G root;
+    class B1,C1,D1,E1,F1,G1 leaf;
 ```
 
-Tool implementations live under [`agent/tools`](agent/tools).
+Types and routing live in [`agent/state.py`](agent/state.py), [`agent/actions/schemas.py`](agent/actions/schemas.py), and [`agent/graph.py`](agent/graph.py).
 
-## Project Layout
+---
+
+## Repo Layout
 
 ```text
 Tinkler/
 ├── agent/
-│   ├── __main__.py           # CLI entrypoint
-│   ├── graph.py              # LangGraph assembly
-│   ├── state.py              # Typed agent state
-│   ├── actions/              # decision schema + parser
-│   ├── nodes/                # graph nodes
-│   ├── prompts/              # system and context prompts
-│   └── tools/                # filesystem and shell tools
+│   ├── __main__.py
+│   ├── graph.py
+│   ├── state.py
+│   ├── actions/
+│   │   ├── parser.py
+│   │   └── schemas.py
+│   ├── nodes/
+│   │   ├── agent_decide.py
+│   │   ├── build_agent_context.py
+│   │   ├── check_termination.py
+│   │   ├── finalize_answer.py
+│   │   ├── init_turn.py
+│   │   ├── record_observation.py
+│   │   └── route_agent_action.py
+│   ├── prompts/
+│   └── tools/
 ├── pyproject.toml
 └── README.md
 ```
 
-## Execution Flow
+---
+
+## What Happens In One Run
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant U as User
     participant CLI as CLI
-    participant G as LangGraph
+    participant G as Graph
     participant M as Model
-    participant T as Tool Node
-    participant FS as Filesystem
+    participant T as Tool
+    participant R as Repo
 
-    U->>CLI: run request
+    U->>CLI: "document this repository"
     CLI->>G: create initial state
-    G->>M: build context + ask for next action
-    M-->>G: structured decision
-    G->>T: execute selected tool
-    T->>FS: inspect or stage write
-    FS-->>T: result
+    G->>M: provide context
+    M-->>G: structured next action
+    G->>T: run selected tool
+    T->>R: inspect files or stage output
+    R-->>T: result
     T-->>G: tool result
-    G->>M: updated context
-    loop until stop
-        M-->>G: next action or finish
+    G->>G: record observation
+    G->>G: check termination
+    loop until enough evidence
+        G->>M: updated context
+        M-->>G: next action
         G->>T: run tool
-        T->>FS: inspect
-        FS-->>T: result
+        T->>R: inspect
+        R-->>T: result
         T-->>G: observation
     end
-    G->>M: finalize answer
+    G->>M: finalize response
+    G->>R: apply staged write
     G-->>CLI: final response
-    CLI-->>U: printed output
 ```
+
+---
 
 ## Quick Start
 
-### Install
+### 1. Install
 
 ```bash
 python -m venv .venv
@@ -191,20 +214,20 @@ source .venv/bin/activate
 pip install -e .
 ```
 
-### Configure
+### 2. Configure
 
 ```bash
 export OPENAI_API_KEY=your_key_here
 export OPENAI_MODEL=gpt-4o-mini
 ```
 
-### Run
+### 3. Run
 
 ```bash
 python -m agent "write a repo summary" --cwd .
 ```
 
-Example with a turn limit:
+With an explicit turn limit:
 
 ```bash
 python -m agent "document this codebase" --cwd . --max-turns 12
@@ -212,48 +235,45 @@ python -m agent "document this codebase" --cwd . --max-turns 12
 
 Entrypoint: [`agent/__main__.py`](agent/__main__.py)
 
-## Design Decisions
+---
+
+## Design Choices
 
 ### One Action Per Turn
 
-The model does not plan a long script. It picks one action, sees the result, and adapts. That keeps the loop grounded in repo reality instead of speculative planning.
+The model is forced to stay grounded. It does not invent a long multi-step script and hope it still makes sense three tool calls later.
 
 ### Deferred Writes
 
-`write_file` stages output first. The actual write happens later in `apply_file_write`, after the final response is ready. This reduces premature mutations and keeps the run easier to reason about.
-
-Related nodes:
-
-- [`agent/tools/write_file.py`](agent/tools/write_file.py)
-- [`agent/nodes/apply_file_write.py`](agent/nodes/apply_file_write.py)
+`write_file` prepares content first. The actual write is applied later by [`agent/nodes/apply_file_write.py`](agent/nodes/apply_file_write.py), after the answer is finalized. That keeps mutation controlled.
 
 ### Structured Decisions
 
-The model output is parsed into a typed action schema before routing. That keeps tool execution narrow and explicit.
+The model emits typed decisions, parsed through [`agent/actions/parser.py`](agent/actions/parser.py) and [`agent/actions/schemas.py`](agent/actions/schemas.py), before the graph routes execution.
 
-Related files:
+---
 
-- [`agent/actions/schemas.py`](agent/actions/schemas.py)
-- [`agent/actions/parser.py`](agent/actions/parser.py)
-- [`agent/nodes/agent_decide.py`](agent/nodes/agent_decide.py)
-
-## Current Stack
+## Stack
 
 - Python 3.11+
 - LangGraph
 - LangChain OpenAI
-- setuptools build backend
+- setuptools
 
-Source of truth: [`pyproject.toml`](pyproject.toml)
+Dependency source: [`pyproject.toml`](pyproject.toml)
 
-## What Makes It Different
+---
 
-```text
-Fixed pipeline agents:
-  inspect -> summarize -> write
+## Key Files
 
-Tinkler:
-  context -> decide -> tool -> observe -> loop -> finalize
-```
+- [`agent/graph.py`](agent/graph.py): graph assembly and routing
+- [`agent/nodes/agent_decide.py`](agent/nodes/agent_decide.py): structured action selection
+- [`agent/state.py`](agent/state.py): typed runtime state
+- [`agent/tools/write_file.py`](agent/tools/write_file.py): deferred write staging
+- [`agent/__main__.py`](agent/__main__.py): CLI entrypoint
 
-That difference is the whole architecture.
+---
+
+## Summary
+
+Tinkler is a small repo agent with a strong constraint: it must learn from each step before taking the next one. That single choice makes the rest of the architecture make sense.
