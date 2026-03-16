@@ -4,10 +4,13 @@ import os
 import subprocess
 from pathlib import Path
 
+from agent.observability import get_logger, log_node_end, log_node_start
 from agent.state import AgentState, ToolResult
 
 MATCH_LIMIT = 50
 OUTPUT_LIMIT = 8000
+
+logger = get_logger(__name__)
 
 
 def _truncate(text: str, limit: int = OUTPUT_LIMIT) -> str:
@@ -50,6 +53,7 @@ def run_search_files(state: AgentState) -> dict:
     action = state["next_action"] or {}
     query = str(action.get("query", "")).strip()
     raw_path = str(action.get("path", ".")).strip() or "."
+    log_node_start(logger, "search_files", state, query=query, path=raw_path)
 
     try:
         if not query:
@@ -107,4 +111,6 @@ def run_search_files(state: AgentState) -> dict:
             "error": str(exc),
         }
 
-    return {"last_tool_result": result}
+    state_update = {"last_tool_result": result}
+    log_node_end(logger, "search_files", {**state, **state_update})
+    return state_update

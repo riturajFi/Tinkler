@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from agent.observability import get_logger, log_node_end, log_node_start
 from agent.state import AgentAction, AgentState
+
+logger = get_logger(__name__)
 
 
 def _action_signature(action: AgentAction) -> str:
@@ -36,18 +39,34 @@ def _is_repeated_tool_action(state: AgentState) -> bool:
 
 
 def check_termination(state: AgentState) -> dict:
+    log_node_start(logger, "check_termination", state)
+    if state["should_stop"] and state["stop_reason"]:
+        state_update = {"should_stop": True, "stop_reason": state["stop_reason"]}
+        log_node_end(logger, "check_termination", {**state, **state_update})
+        return state_update
+
     next_action = state["next_action"] or {"kind": "finish"}
 
     if next_action["kind"] == "finish":
-        return {"should_stop": True, "stop_reason": "agent_finished"}
+        state_update = {"should_stop": True, "stop_reason": "agent_finished"}
+        log_node_end(logger, "check_termination", {**state, **state_update})
+        return state_update
 
     if state["pending_write_path"] and state["pending_write_content"] is not None:
-        return {"should_stop": True, "stop_reason": "write_ready"}
+        state_update = {"should_stop": True, "stop_reason": "write_ready"}
+        log_node_end(logger, "check_termination", {**state, **state_update})
+        return state_update
 
     if state["turn_index"] >= state["max_turns"]:
-        return {"should_stop": True, "stop_reason": "max_turns_reached"}
+        state_update = {"should_stop": True, "stop_reason": "max_turns_reached"}
+        log_node_end(logger, "check_termination", {**state, **state_update})
+        return state_update
 
     if _is_repeated_tool_action(state):
-        return {"should_stop": True, "stop_reason": "repeated_action"}
+        state_update = {"should_stop": True, "stop_reason": "repeated_action"}
+        log_node_end(logger, "check_termination", {**state, **state_update})
+        return state_update
 
-    return {"should_stop": False, "stop_reason": None}
+    state_update = {"should_stop": False, "stop_reason": None}
+    log_node_end(logger, "check_termination", {**state, **state_update})
+    return state_update

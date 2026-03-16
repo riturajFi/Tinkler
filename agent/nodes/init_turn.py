@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from agent.observability import get_logger, log_node_end, log_node_start
 from agent.state import AgentState
+
+logger = get_logger(__name__)
 
 
 def init_turn(_: AgentState) -> dict:
-    return {
+    state_update = {
         "turn_index": 0,
         "working_summary": "",
         "tool_history": [],
@@ -23,3 +26,6 @@ def init_turn(_: AgentState) -> dict:
         "should_stop": False,
         "stop_reason": None,
     }
+    log_node_start(logger, "init_turn", state_update)
+    log_node_end(logger, "init_turn", state_update)
+    return state_update

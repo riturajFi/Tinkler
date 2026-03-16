@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from agent.observability import get_logger, log_node_end, log_node_start
 from agent.state import AgentState, ToolResult
 
 OUTPUT_LIMIT = 8000
+
+logger = get_logger(__name__)
 
 
 def _truncate(text: str, limit: int = OUTPUT_LIMIT) -> str:
@@ -33,6 +36,14 @@ def run_read_file(state: AgentState) -> dict:
     raw_path = str(action.get("path", "")).strip()
     start_line = max(1, int(action.get("start_line", 1)))
     end_line = max(start_line, int(action.get("end_line", start_line + 249)))
+    log_node_start(
+        logger,
+        "read_file",
+        state,
+        path=raw_path,
+        start_line=start_line,
+        end_line=end_line,
+    )
 
     try:
         path = _resolve_file(state["repo_root"], raw_path)
@@ -75,4 +86,6 @@ def run_read_file(state: AgentState) -> dict:
             "error": str(exc),
         }
 
-    return {"last_tool_result": result}
+    state_update = {"last_tool_result": result}
+    log_node_end(logger, "read_file", {**state, **state_update})
+    return state_update

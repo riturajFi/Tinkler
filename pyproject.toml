@@ -12,5 +12,8 @@ dependencies = [
   "langchain-openai>=0.3.0,<1.0.0",
 ]
 
+[project.scripts]
+tinkler = "tinkler_cli.__main__:main"
+
 [tool.setuptools.packages.find]
-include = ["agent*"]
+include = ["agent*", "tinkler_cli*"]

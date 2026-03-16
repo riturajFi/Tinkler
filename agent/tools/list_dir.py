@@ -3,9 +3,12 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from agent.observability import get_logger, log_node_end, log_node_start
 from agent.state import AgentState, ToolResult
 
 ENTRY_LIMIT = 300
+
+logger = get_logger(__name__)
 
 
 def _resolve_dir(repo_root: str, raw_path: str) -> Path:
@@ -23,6 +26,7 @@ def run_list_dir(state: AgentState) -> dict:
     action = state["next_action"] or {}
     raw_path = str(action.get("path", ".")).strip() or "."
     max_depth = max(0, min(int(action.get("max_depth", 2)), 5))
+    log_node_start(logger, "list_dir", state, path=raw_path, max_depth=max_depth)
 
     try:
         repo_root = Path(state["repo_root"]).resolve()
@@ -66,4 +70,6 @@ def run_list_dir(state: AgentState) -> dict:
             "error": str(exc),
         }
 
-    return {"last_tool_result": result}
+    state_update = {"last_tool_result": result}
+    log_node_end(logger, "list_dir", {**state, **state_update})
+    return state_update

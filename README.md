@@ -235,6 +235,35 @@ python -m agent "document this codebase" --cwd . --max-turns 12
 
 Entrypoint: [`agent/__main__.py`](agent/__main__.py)
 
+### 4. Analyze Any Repo With The Read-Only CLI
+
+Use the wrapper CLI when you want to point Tinkler at another local repository
+without allowing file writes. The CLI is a thin consumer over
+[`agent/service.py`](agent/service.py), so other consumers such as a UI can
+reuse the same runtime entrypoints instead of rebuilding the agent flow.
+
+```bash
+python -m tinkler_cli analyze ../some-repo
+```
+
+Focus the analysis:
+
+```bash
+python -m tinkler_cli analyze ../some-repo --focus architecture --trace
+```
+
+Ask a custom question and emit JSON:
+
+```bash
+python -m tinkler_cli analyze ../some-repo --request "Explain the startup path and main risks." --json
+```
+
+After installation, the same wrapper is also available as:
+
+```bash
+tinkler analyze ../some-repo
+```
+
 ---
 
 ## Design Choices

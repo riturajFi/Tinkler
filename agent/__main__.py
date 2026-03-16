@@ -2,12 +2,9 @@ from __future__ import annotations
 
 import argparse
 import os
-from pathlib import Path
 
-from langchain_openai import ChatOpenAI
-
-from agent.graph import build_graph
-from agent.state import create_initial_state
+from agent.observability import configure_logging
+from agent.service import run_agent
 
 
 def main() -> None:
@@ -20,22 +17,25 @@ def main() -> None:
         default=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
         help="OpenAI model name.",
     )
+    parser.add_argument(
+        "--log-level",
+        default=os.environ.get("AGENT_LOG_LEVEL", "INFO"),
+        help="Python logging level for agent observability.",
+    )
     args = parser.parse_args()
+    configure_logging(args.log_level)
 
     if not os.environ.get("OPENAI_API_KEY"):
         raise SystemExit("OPENAI_API_KEY is required.")
 
-    repo_root = str(Path(args.cwd).resolve())
-    graph = build_graph()
-    model = ChatOpenAI(model=args.model, temperature=0)
-    state = create_initial_state(
+    result = run_agent(
+        args.cwd,
         request=args.request,
-        cwd=repo_root,
-        repo_root=repo_root,
         max_turns=args.max_turns,
+        model_name=args.model,
+        allow_writes=True,
     )
-    result = graph.invoke(state, config={"configurable": {"model": model}})
-    print(result.get("final_response", ""))
+    print(result.response)
 
 
 if __name__ == "__main__":

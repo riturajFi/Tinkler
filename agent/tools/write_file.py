@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from agent.observability import get_logger, log_node_end, log_node_start
 from agent.state import AgentState, ToolResult
+
+logger = get_logger(__name__)
 
 
 def _resolve_target(repo_root: str, raw_path: str) -> Path:
@@ -16,6 +19,7 @@ def stage_write_file(state: AgentState) -> dict:
     action = state["next_action"] or {}
     raw_path = str(action.get("path", "")).strip()
     content = str(action.get("content", ""))
+    log_node_start(logger, "write_file", state, path=raw_path, chars=len(content))
 
     try:
         if not raw_path:
@@ -30,11 +34,13 @@ def stage_write_file(state: AgentState) -> dict:
             "input": {"path": raw_path},
             "data": {"path": rel_path, "chars": len(content)},
         }
-        return {
+        state_update = {
             "pending_write_path": rel_path,
             "pending_write_content": content,
             "last_tool_result": result,
         }
+        log_node_end(logger, "write_file", {**state, **state_update}, staged=True)
+        return state_update
     except Exception as exc:
         result = {
             "tool": "write_file",
@@ -44,4 +50,6 @@ def stage_write_file(state: AgentState) -> dict:
             "data": {},
             "error": str(exc),
         }
-        return {"last_tool_result": result}
+        state_update = {"last_tool_result": result}
+        log_node_end(logger, "write_file", {**state, **state_update}, staged=False)
+        return state_update

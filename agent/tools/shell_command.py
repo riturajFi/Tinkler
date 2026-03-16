@@ -3,11 +3,14 @@ from __future__ import annotations
 import shlex
 import subprocess
 
+from agent.observability import get_logger, log_node_end, log_node_start
 from agent.state import AgentState, ToolResult
 
 ALLOWED_COMMANDS = {"pwd", "ls", "find", "rg", "git", "cat", "sed", "head", "tail", "wc", "tree"}
 SAFE_GIT_SUBCOMMANDS = {"status", "log", "rev-parse", "branch", "remote", "show", "ls-files", "diff"}
 OUTPUT_LIMIT = 6000
+
+logger = get_logger(__name__)
 
 
 def _truncate(text: str, limit: int = OUTPUT_LIMIT) -> str:
@@ -32,6 +35,7 @@ def _validate_command(command: str) -> list[str]:
 def run_shell_command(state: AgentState) -> dict:
     action = state["next_action"] or {}
     command = str(action.get("command", "")).strip()
+    log_node_start(logger, "shell_command", state, command=command)
 
     try:
         tokens = _validate_command(command)
@@ -70,4 +74,6 @@ def run_shell_command(state: AgentState) -> dict:
             "error": str(exc),
         }
 
-    return {"last_tool_result": result}
+    state_update = {"last_tool_result": result}
+    log_node_end(logger, "shell_command", {**state, **state_update})
+    return state_update

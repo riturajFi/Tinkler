@@ -4,11 +4,14 @@ import json
 import re
 from pathlib import Path
 
+from agent.observability import get_logger, log_node_end, log_node_start
 from agent.state import AgentState
 
 ENTRYPOINT_RE = re.compile(
     r"(^|/)(main|app|server|cli|index|__main__|graph)\.(py|ts|tsx|js|jsx|rs)$"
 )
+
+logger = get_logger(__name__)
 
 
 def _merge_unique(existing: list[str], new_items: list[str]) -> list[str]:
@@ -120,8 +123,10 @@ def _build_summary(repo_facts: dict, likely_entrypoints: list[str], current: str
 
 
 def record_observation(state: AgentState) -> dict:
+    log_node_start(logger, "record_observation", state)
     result = state["last_tool_result"]
     if result is None:
+        log_node_end(logger, "record_observation", state, observation="skipped")
         return {}
 
     action = state["next_action"] or {"kind": "finish"}
@@ -171,7 +176,7 @@ def record_observation(state: AgentState) -> dict:
         likely_entrypoints = _merge_unique(likely_entrypoints, [str(repo_facts["entrypoint"])])
 
     working_summary = _build_summary(repo_facts, likely_entrypoints, state["working_summary"])
-    return {
+    state_update = {
         "tool_history": tool_history,
         "observations": observations,
         "discovered_files": discovered_files,
@@ -180,3 +185,12 @@ def record_observation(state: AgentState) -> dict:
         "repo_facts": repo_facts,
         "working_summary": working_summary,
     }
+    merged_state = {**state, **state_update}
+    log_node_end(
+        logger,
+        "record_observation",
+        merged_state,
+        observations=len(observations),
+        discovered_files=len(discovered_files),
+    )
+    return state_update
