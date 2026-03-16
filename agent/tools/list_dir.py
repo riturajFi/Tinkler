@@ -60,6 +60,12 @@ def run_list_dir(state: AgentState) -> dict:
                 "files": files[:ENTRY_LIMIT],
             },
         }
+        logger.info(
+            "list_dir output path=%r dirs=%r files=%r",
+            raw_path,
+            dirs[:ENTRY_LIMIT],
+            files[:ENTRY_LIMIT],
+        )
     except Exception as exc:
         result = {
             "tool": "list_dir",

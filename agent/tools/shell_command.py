@@ -50,6 +50,13 @@ def run_shell_command(state: AgentState) -> dict:
         stdout = _truncate(completed.stdout.strip())
         stderr = _truncate(completed.stderr.strip())
         ok = completed.returncode == 0
+        logger.info(
+            "shell_command output command=%r returncode=%s stdout=%r stderr=%r",
+            command,
+            completed.returncode,
+            stdout,
+            stderr,
+        )
         summary = stdout.splitlines()[0] if stdout else f"Command exited with {completed.returncode}"
         result: ToolResult = {
             "tool": "shell_command",

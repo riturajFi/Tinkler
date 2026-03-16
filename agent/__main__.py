@@ -11,7 +11,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run the LangGraph repo agent.")
     parser.add_argument("request", help="Task for the agent to complete.")
     parser.add_argument("--cwd", default=".", help="Repository root to inspect.")
-    parser.add_argument("--max-turns", type=int, default=12, help="Maximum agent turns.")
+    parser.add_argument("--max-turns", type=int, default=30, help="Maximum agent turns.")
     parser.add_argument(
         "--model",
         default=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),

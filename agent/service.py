@@ -213,7 +213,7 @@ def run_analysis(
     *,
     question: str | None = None,
     focus: str = "overview",
-    max_turns: int = 12,
+    max_turns: int = 30,
     model_name: str | None = None,
     temperature: float = 0.0,
     model: Any | None = None,

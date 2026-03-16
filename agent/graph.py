@@ -77,11 +77,18 @@ def build_graph(*, allow_writes: bool = True):
     graph.add_node("check_termination", check_termination)
     graph.add_node("finalize_answer", finalize_answer)
 
+    # The graph always starts by resetting the agent's working state.
     graph.add_edge(START, "init_turn")
+    
+    # build context from - repo path + request
     graph.add_edge("init_turn", "build_agent_context")
-    graph.add_edge("build_agent_context", "agent_decide")
-    graph.add_edge("agent_decide", "route_agent_action")
 
+    # Pass the built context and stored results from earlier tool calls into agent_decide.
+    graph.add_edge("build_agent_context", "agent_decide")
+
+    # Parse the decision and route to the right tool
+    graph.add_edge("agent_decide", "route_agent_action")
+    
     graph.add_conditional_edges(
         "route_agent_action",
         _route_action,
@@ -95,6 +102,7 @@ def build_graph(*, allow_writes: bool = True):
         },
     )
 
+    # Route back from the tool after execution to the record observation
     graph.add_edge("shell_command", "record_observation")
     graph.add_edge("read_file", "record_observation")
     graph.add_edge("list_dir", "record_observation")

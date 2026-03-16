@@ -145,24 +145,40 @@ def record_observation(state: AgentState) -> dict:
     data = result.get("data", {})
     tool_name = result.get("tool")
 
+    # Tool: list_dir
+    # Strategy: directory listing reveals new files and subdirectories.
+    # We add them to discovery sets so the agent knows what exists in the repo.
     if tool_name == "list_dir":
         discovered_files = _merge_unique(discovered_files, data.get("files", []))
         discovered_dirs = _merge_unique(discovered_dirs, data.get("dirs", []))
 
+
+    # Tool: search_files
+    # Strategy: search returns file paths where a pattern was found.
+    # These paths are likely relevant to the task, so we add them as discovered files.
     if tool_name == "search_files":
         matched_paths = _extract_matched_paths(data.get("matches", []))
         discovered_files = _merge_unique(discovered_files, matched_paths)
 
+
+    # Tools: read_file / write_file
+    # Strategy: if a file was read or written, we definitely know this file exists
+    # and is relevant to the current exploration. Ensure it is tracked.
     if tool_name in {"read_file", "write_file"}:
         path = data.get("path")
         if path:
             discovered_files = _merge_unique(discovered_files, [path])
 
+
+    # Update repository knowledge derived from file names
+    # (e.g., detect entry points, configs, tests, modules based on naming patterns)
     _update_name_facts(repo_facts, discovered_files)
 
     if tool_name == "read_file":
         path = data.get("path", "")
         raw_content = data.get("raw_content", "")
+
+        # TODO: Make this dynamic with AI
         _update_content_facts(repo_facts, path, raw_content)
         if path and (ENTRYPOINT_RE.search(path) or repo_facts.get("entrypoint") == path):
             likely_entrypoints = _merge_unique(likely_entrypoints, [path])

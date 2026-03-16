@@ -6,6 +6,9 @@ from agent.state import AgentState
 logger = get_logger(__name__)
 
 
+# Reset all per-run working fields before the graph starts making decisions.
+# This keeps request/repo inputs from create_initial_state(), but clears
+# summaries, tool results, observations, routing, and stop state.
 def init_turn(_: AgentState) -> dict:
     state_update = {
         "turn_index": 0,

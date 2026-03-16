@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+echo "building layout catalog"
