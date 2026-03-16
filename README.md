@@ -235,6 +235,32 @@ python -m agent "document this codebase" --cwd . --max-turns 12
 
 Entrypoint: [`agent/__main__.py`](agent/__main__.py)
 
+### 3a. Run The Agent On `dummy_repo`
+
+From the Tinkler repo root, point `--cwd` at the bundled sample repository:
+
+```bash
+python -m agent "Analyze the folder structure" --cwd dummy_repo
+```
+
+With observability logs enabled:
+
+```bash
+python -m agent "Analyze the folder structure" --cwd dummy_repo --log-level INFO
+```
+
+With a higher turn limit:
+
+```bash
+python -m agent "Analyze the folder structure" --cwd dummy_repo --max-turns 20 --log-level INFO
+```
+
+What this does:
+- runs [`agent/__main__.py`](agent/__main__.py)
+- resolves `dummy_repo` relative to the current working directory
+- builds the LangGraph workflow from [`agent/graph.py`](agent/graph.py)
+- analyzes `/dummy_repo` instead of the Tinkler repo itself
+
 ### 4. Analyze Any Repo With The Read-Only CLI
 
 Use the wrapper CLI when you want to point Tinkler at another local repository
