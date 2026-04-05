@@ -2,6 +2,9 @@
 
 Tinkler is a local repository agent built with LangGraph. It inspects a codebase in short decision loops, chooses one tool call at a time, updates its working context from the result, and only edits files through `apply_patch` when writes are allowed.
 
+https://github.com/user-attachments/assets/029f8b77-e102-4bb5-912d-0a91f6fc334e
+
+
 The repo currently contains three user-facing surfaces:
 
 - `agent/`: the core LangGraph agent runtime
