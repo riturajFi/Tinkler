@@ -22,6 +22,57 @@ class _SequentialModel:
 
 
 class AgentLoopTests(unittest.TestCase):
+    def test_search_mode_alias_is_normalized(self):
+        from agent.actions.parser import parse_model_action
+
+        parsed = parse_model_action(
+            {
+                "type": "tool_call",
+                "tool_name": "search_files",
+                "pattern": "storage",
+                "path": ".",
+                "mode": "filename",
+            },
+            allowed_tools=("search_files",),
+        )
+
+        self.assertEqual(parsed["tool_name"], "search_files")
+        self.assertEqual(parsed["args"]["mode"], "files")
+
+    def test_unknown_search_mode_defaults_safely(self):
+        from agent.actions.parser import parse_model_action
+
+        parsed = parse_model_action(
+            {
+                "type": "tool_call",
+                "tool_name": "search_files",
+                "pattern": "storage",
+                "path": ".",
+                "mode": "content-search",
+            },
+            allowed_tools=("search_files",),
+        )
+
+        self.assertEqual(parsed["tool_name"], "search_files")
+        self.assertEqual(parsed["args"]["mode"], "content")
+
+    def test_read_file_can_fall_back_to_previous_path(self):
+        from agent.actions.parser import parse_model_action
+
+        parsed = parse_model_action(
+            {
+                "type": "tool_call",
+                "tool_name": "read_file",
+                "start_line": 1,
+                "end_line": 20,
+            },
+            allowed_tools=("read_file",),
+            fallback_read_path="README.md",
+        )
+
+        self.assertEqual(parsed["tool_name"], "read_file")
+        self.assertEqual(parsed["args"]["path"], "README.md")
+
     def test_tool_result_is_appended_and_loop_returns_to_model(self):
         graph = build_graph()
         model = _SequentialModel(

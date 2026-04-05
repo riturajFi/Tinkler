@@ -4,6 +4,8 @@ import json
 
 from agent.state import AgentState, ModelAction
 
+MAX_IDENTICAL_TOOL_REQUESTS = 1000
+
 
 def _action_signature(action: ModelAction | None) -> str:
     if not action:
@@ -36,7 +38,7 @@ def should_stop_after_model_step(state: AgentState, action: ModelAction | None) 
         for entry in state.get("turn_history", [])
         if _action_signature(entry.get("action")) == signature
     ]
-    if len(matches) >= 3:
+    if len(matches) >= MAX_IDENTICAL_TOOL_REQUESTS:
         return True, "repeated_tool_request"
 
     return False, None

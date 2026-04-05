@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from agent.actions.schemas import ModelActionModel
@@ -24,8 +25,11 @@ def _normalize_shell_command(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _normalize_read_file(args: dict[str, Any]) -> dict[str, Any]:
-    path = _require_text(args, "path")
+def _normalize_read_file(args: dict[str, Any], *, fallback_path: str | None = None) -> dict[str, Any]:
+    raw_path = str(args.get("path", "")).strip()
+    path = raw_path or (fallback_path or "").strip()
+    if not path:
+        raise ValueError("path is required")
     start_line = max(1, int(args.get("start_line", 1)))
     end_line = max(start_line, int(args.get("end_line", start_line + 249)))
     return {
@@ -44,9 +48,31 @@ def _normalize_list_dir(args: dict[str, Any]) -> dict[str, Any]:
 def _normalize_search_files(args: dict[str, Any]) -> dict[str, Any]:
     pattern = _require_text(args, "pattern")
     path = str(args.get("path", ".")).strip() or "."
-    mode = str(args.get("mode", "content")).strip() or "content"
-    if mode not in {"content", "files"}:
-        raise ValueError("mode must be 'content' or 'files'")
+    raw_mode = str(args.get("mode", "content")).strip().lower() or "content"
+    normalized_mode = re.sub(r"[^a-z]+", "", raw_mode)
+    mode_aliases = {
+        "content": "content",
+        "contents": "content",
+        "text": "content",
+        "grep": "content",
+        "rg": "content",
+        "code": "content",
+        "source": "content",
+        "file": "files",
+        "files": "files",
+        "filename": "files",
+        "filenames": "files",
+        "name": "files",
+        "names": "files",
+        "path": "files",
+        "paths": "files",
+    }
+    mode = mode_aliases.get(raw_mode) or mode_aliases.get(normalized_mode)
+    if mode is None:
+        if "file" in raw_mode or "name" in raw_mode or "path" in raw_mode:
+            mode = "files"
+        else:
+            mode = "content"
     return {
         "pattern": pattern,
         "path": path,
@@ -63,6 +89,7 @@ def parse_model_action(
     raw: ModelActionModel | dict[str, Any],
     *,
     allowed_tools: tuple[ToolName, ...],
+    fallback_read_path: str | None = None,
 ) -> ModelAction:
     if isinstance(raw, ModelActionModel):
         action = raw
@@ -89,7 +116,7 @@ def parse_model_action(
     if tool_name == "shell_command":
         normalized_args = _normalize_shell_command(args)
     elif tool_name == "read_file":
-        normalized_args = _normalize_read_file(args)
+        normalized_args = _normalize_read_file(args, fallback_path=fallback_read_path)
     elif tool_name == "list_dir":
         normalized_args = _normalize_list_dir(args)
     elif tool_name == "search_files":

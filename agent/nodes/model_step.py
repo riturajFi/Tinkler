@@ -51,6 +51,26 @@ def _assistant_message_for_action(action: dict) -> str:
     return f"Requested tool {tool_name} with args {args}"
 
 
+def _fallback_read_path(state: AgentState) -> str | None:
+    for record in reversed(state.get("tool_history", [])):
+        if record.get("tool_name") == "read_file":
+            path = str(record.get("args", {}).get("path", "")).strip()
+            if path:
+                return path
+
+    for path in reversed(state.get("important_files", [])):
+        candidate = str(path).strip()
+        if candidate:
+            return candidate
+
+    for path in state.get("discovered_files", []):
+        candidate = str(path).strip()
+        if candidate:
+            return candidate
+
+    return None
+
+
 def model_step(state: AgentState, config: RunnableConfig) -> dict:
     log_node_start(logger, "model_step", state)
     allowed_tools = _get_allowed_tools(config)
@@ -59,7 +79,11 @@ def model_step(state: AgentState, config: RunnableConfig) -> dict:
 
     try:
         raw_action = model.invoke(prompt_messages)
-        model_action = parse_model_action(raw_action, allowed_tools=allowed_tools)
+        model_action = parse_model_action(
+            raw_action,
+            allowed_tools=allowed_tools,
+            fallback_read_path=_fallback_read_path(state),
+        )
         assistant_message = _assistant_message_for_action(model_action)
         state_update = {
             "turn_count": state["turn_count"] + 1,
@@ -91,4 +115,3 @@ def model_step(state: AgentState, config: RunnableConfig) -> dict:
     chosen = state_update["model_action"].get("tool_name") or state_update["model_action"].get("type")
     log_node_end(logger, "model_step", merged_state, chosen=chosen)
     return state_update
-
