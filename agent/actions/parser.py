@@ -64,7 +64,15 @@ def parse_model_action(
     *,
     allowed_tools: tuple[ToolName, ...],
 ) -> ModelAction:
-    action = raw if isinstance(raw, ModelActionModel) else ModelActionModel.model_validate(raw)
+    if isinstance(raw, ModelActionModel):
+        action = raw
+    else:
+        raw_payload = dict(raw)
+        nested_args = raw_payload.pop("args", None)
+        if isinstance(nested_args, dict):
+            for key, value in nested_args.items():
+                raw_payload.setdefault(key, value)
+        action = ModelActionModel.model_validate(raw_payload)
     if action.type == "final_answer":
         return {"type": "final_answer", "message": action.message.strip()}
 
@@ -74,7 +82,10 @@ def parse_model_action(
     if tool_name not in allowed_tools:
         raise ValueError(f"Tool {tool_name!r} is disabled for this run.")
 
-    args = dict(action.args or {})
+    args = action.model_dump(
+        exclude_none=True,
+        exclude={"type", "tool_name", "message"},
+    )
     if tool_name == "shell_command":
         normalized_args = _normalize_shell_command(args)
     elif tool_name == "read_file":

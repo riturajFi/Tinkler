@@ -33,6 +33,9 @@ htmlcov/
 # Local environment and secrets
 .env
 .env.*
+node_modules/
+tinkler_desktop/node_modules/
+tinkler_desktop/.electron/
 
 # Editor and OS noise
 .DS_Store

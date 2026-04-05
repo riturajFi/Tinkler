@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tinkler Desktop</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <div class="shell-frame">
+        <header class="hero">
+          <div class="hero-copy">
+            <p class="eyebrow">Local Coding Console</p>
+            <h1>Tinkler Desktop</h1>
+            <p class="subtitle">
+              Select a project folder, give the agent a directive, and watch the loop think, inspect,
+              edit, and finish.
+            </p>
+          </div>
+
+          <div class="hero-side">
+            <div class="status-card status-card-primary">
+              <span class="status-label">Backend Link</span>
+              <span id="backend-status-pill" class="status-pill status-idle">Idle</span>
+              <span id="backend-message" class="status-caption">Waiting for backend.</span>
+            </div>
+
+            <div class="status-actions">
+              <button id="backend-start-button" class="secondary-button" type="button">
+                Start or Reconnect
+              </button>
+            </div>
+          </div>
+        </header>
+
+        <main class="layout">
+          <section class="panel controls-panel">
+            <div class="panel-header">
+              <div>
+                <p class="section-kicker">Run Deck</p>
+                <h2>Command Surface</h2>
+              </div>
+              <p>Keep the prompt concrete. The backend streams every loop event live.</p>
+            </div>
+
+            <div class="command-card">
+              <div class="field-group">
+                <label for="selected-folder">Repository Folder</label>
+                <div class="folder-row">
+                  <input id="selected-folder" type="text" placeholder="Select a folder" readonly />
+                  <button id="pick-folder-button" class="primary-button" type="button">Choose Folder</button>
+                </div>
+              </div>
+
+              <div class="field-group field-group-large">
+                <label for="request-input">Instruction</label>
+                <textarea
+                  id="request-input"
+                  rows="8"
+                  placeholder="Example: Refactor the backend event payloads for cleaner frontend consumption and update the Electron UI."
+                ></textarea>
+              </div>
+
+              <div class="config-grid">
+                <div class="field-group">
+                  <label for="model-input">Model</label>
+                  <input id="model-input" type="text" placeholder="Use backend default" />
+                </div>
+                <div class="field-group">
+                  <label for="max-turns-input">Max Turns</label>
+                  <input id="max-turns-input" type="number" min="1" max="250" value="30" />
+                </div>
+              </div>
+
+              <div class="action-bar">
+                <label class="toggle">
+                  <input id="allow-writes-input" type="checkbox" checked />
+                  <span>Allow file edits</span>
+                </label>
+                <button id="run-button" class="primary-button primary-button-strong" type="button">
+                  Run Agent
+                </button>
+              </div>
+            </div>
+
+            <div class="meta-grid">
+              <div class="meta-card">
+                <span class="meta-label">Backend URL</span>
+                <span id="backend-url">http://127.0.0.1:8000</span>
+              </div>
+              <div class="meta-card">
+                <span class="meta-label">Loop Progress</span>
+                <span id="loop-progress">0 / 0</span>
+              </div>
+            </div>
+
+            <div class="log-panel">
+              <div class="section-header">
+                <div>
+                  <p class="section-kicker">Machine Trace</p>
+                  <h3>Backend Log</h3>
+                </div>
+              </div>
+              <pre id="backend-log" class="log-output">No logs yet.</pre>
+            </div>
+          </section>
+
+          <section class="panel run-panel">
+            <div class="response-panel">
+              <div class="section-header">
+                <div>
+                  <p class="section-kicker">Outcome</p>
+                  <h2>Final Response</h2>
+                </div>
+                <span id="run-status" class="run-status idle">Not running</span>
+              </div>
+              <pre id="final-response" class="response-output">Submit a request to see the final answer.</pre>
+              <div id="changed-files" class="changed-files"></div>
+            </div>
+
+            <div class="timeline-panel">
+              <div class="section-header">
+                <div>
+                  <p class="section-kicker">Activity</p>
+                  <h2>Loop Timeline</h2>
+                </div>
+                <span id="event-count">0 events</span>
+              </div>
+              <div id="timeline" class="timeline"></div>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <script src="./backend-client.js"></script>
+    <script src="./renderer.js"></script>
+  </body>
+</html>
