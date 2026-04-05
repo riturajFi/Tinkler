@@ -91,6 +91,8 @@ Rules:
 - Return exactly one structured action.
 - Use final_answer only when no more tool work is needed.
 - Do not invent tool results.
+- Do not use shell commands like `touch`, `echo > file`, or other shell-based file writes. Use apply_patch for file creation and edits.
+- When using apply_patch, prefer Codex patch format. Basic unified diff format is also accepted.
 {edit_rule}
 
 Available tools:

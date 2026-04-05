@@ -29,8 +29,80 @@ def _resolve_repo_path(repo_root: str, raw_path: str) -> Path:
     return candidate
 
 
-def _parse_patch(patch: str) -> list[PatchOperation]:
+def _strip_diff_prefix(path: str) -> str:
+    normalized = path.strip()
+    if normalized.startswith("a/") or normalized.startswith("b/"):
+        return normalized[2:]
+    return normalized
+
+
+def _convert_unified_diff_to_codex_patch(patch: str) -> str:
     lines = patch.splitlines()
+    if not lines:
+        return patch
+    if lines[0] == "*** Begin Patch":
+        return patch
+    if not (lines[0].startswith("--- ") or lines[0].startswith("diff --git ")):
+        return patch
+
+    converted: list[str] = ["*** Begin Patch"]
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if line.startswith("diff --git "):
+            index += 1
+            continue
+        if not line.startswith("--- "):
+            index += 1
+            continue
+
+        old_path = line[4:].strip()
+        index += 1
+        if index >= len(lines) or not lines[index].startswith("+++ "):
+            raise ValueError("Unified diff is missing +++ header")
+        new_path = lines[index][4:].strip()
+        index += 1
+
+        if old_path == "/dev/null":
+            target_path = _strip_diff_prefix(new_path)
+            converted.append(f"*** Add File: {target_path}")
+            while index < len(lines):
+                current = lines[index]
+                if current.startswith("diff --git ") or current.startswith("--- "):
+                    break
+                if current.startswith("@@"):
+                    index += 1
+                    continue
+                if current.startswith("+") and not current.startswith("+++ "):
+                    converted.append(current)
+                elif current.startswith("\\ No newline at end of file"):
+                    pass
+                index += 1
+            continue
+
+        source_path = _strip_diff_prefix(old_path)
+        target_path = _strip_diff_prefix(new_path)
+        converted.append(f"*** Update File: {source_path}")
+        if target_path != source_path:
+            converted.append(f"*** Move to: {target_path}")
+        while index < len(lines):
+            current = lines[index]
+            if current.startswith("diff --git ") or current.startswith("--- "):
+                break
+            if current.startswith("@@"):
+                converted.append("@@")
+            elif current.startswith((" ", "+", "-")) and not current.startswith(("--- ", "+++ ")):
+                converted.append(current)
+            elif current.startswith("\\ No newline at end of file"):
+                pass
+            index += 1
+
+    converted.append("*** End Patch")
+    return "\n".join(converted)
+
+
+def _parse_patch(patch: str) -> list[PatchOperation]:
+    lines = _convert_unified_diff_to_codex_patch(patch).splitlines()
     if not lines or lines[0] != "*** Begin Patch":
         raise ValueError("Patch must start with '*** Begin Patch'")
 

@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from agent.graph import build_graph
+from agent.policies.command_policy import validate_command
 from agent.state import create_initial_state
 
 
@@ -165,3 +166,56 @@ class AgentLoopTests(unittest.TestCase):
         self.assertEqual(result["tool_history"][0]["tool_name"], "apply_patch")
         self.assertIn("notes.txt", result["changed_files"])
         self.assertEqual(result["final_answer"], "Patched the repository.\n\nChanged files: notes.txt")
+
+    def test_apply_patch_accepts_unified_diff_add_file(self):
+        graph = build_graph()
+        patch = "\n".join(
+            [
+                "--- /dev/null",
+                "+++ b/notes.txt",
+                "@@",
+                "+hello from unified diff",
+            ]
+        )
+        model = _SequentialModel(
+            [
+                {
+                    "type": "tool_call",
+                    "tool_name": "apply_patch",
+                    "args": {"patch": patch},
+                },
+                {
+                    "type": "final_answer",
+                    "message": "Patched the repository.",
+                },
+            ]
+        )
+
+        with tempfile.TemporaryDirectory() as repo_dir:
+            repo_root = Path(repo_dir)
+            state = create_initial_state(
+                request="Add notes.txt",
+                cwd=str(repo_root),
+                repo_root=str(repo_root),
+                max_turns=4,
+            )
+
+            result = graph.invoke(
+                state,
+                config={
+                    "recursion_limit": 40,
+                    "configurable": {
+                        "model": model,
+                        "allowed_tools": ("apply_patch",),
+                    },
+                },
+            )
+
+            self.assertEqual((repo_root / "notes.txt").read_text(encoding="utf-8"), "hello from unified diff\n")
+
+        self.assertEqual(result["tool_history"][0]["tool_name"], "apply_patch")
+        self.assertIn("notes.txt", result["changed_files"])
+
+    def test_validate_command_explains_file_writes_use_apply_patch(self):
+        with self.assertRaisesRegex(ValueError, "Use apply_patch for creating or editing files"):
+            validate_command("touch notes.txt")
