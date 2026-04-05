@@ -6,29 +6,32 @@ from agent.state import AgentState
 logger = get_logger(__name__)
 
 
-# Reset all per-run working fields before the graph starts making decisions.
-# This keeps request/repo inputs from create_initial_state(), but clears
-# summaries, tool results, observations, routing, and stop state.
-def init_turn(_: AgentState) -> dict:
+def init_turn(state: AgentState) -> dict:
     state_update = {
-        "turn_index": 0,
-        "working_summary": "",
+        "messages": [{"role": "user", "content": state["user_request"]}],
+        "turn_history": [],
         "tool_history": [],
-        "observations": [],
+        "last_tool_result": None,
+        "last_tool_name": None,
         "discovered_files": [],
         "discovered_dirs": [],
-        "likely_entrypoints": [],
+        "important_files": [],
         "repo_facts": {},
-        "pending_write_path": None,
-        "pending_write_content": None,
-        "final_response": None,
-        "agent_context": "",
-        "next_action": None,
-        "route": None,
-        "last_tool_result": None,
-        "should_stop": False,
+        "pending_patch": None,
+        "final_answer": None,
+        "turn_count": 0,
+        "done": False,
         "stop_reason": None,
+        "turn_context": "",
+        "prompt_messages": [],
+        "tool_schemas": [],
+        "model_action": None,
+        "current_tool_result": None,
+        "route": None,
+        "changed_files": [],
     }
-    log_node_start(logger, "init_turn", state_update)
-    log_node_end(logger, "init_turn", state_update)
+    merged_state = {**state, **state_update}
+    log_node_start(logger, "init_turn", merged_state)
+    log_node_end(logger, "init_turn", merged_state)
     return state_update
+

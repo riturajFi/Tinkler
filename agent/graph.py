@@ -2,128 +2,70 @@ from __future__ import annotations
 
 from langgraph.graph import END, START, StateGraph
 
-from agent.observability import get_logger
-from agent.nodes.agent_decide import agent_decide
-from agent.nodes.apply_file_write import apply_file_write
-from agent.nodes.build_agent_context import build_agent_context
-from agent.nodes.check_termination import check_termination
-from agent.nodes.finalize_answer import finalize_answer
+from agent.nodes.append_tool_result import append_tool_result
+from agent.nodes.build_prompt_and_tools import build_prompt_and_tools
+from agent.nodes.build_turn_context import build_turn_context
+from agent.nodes.finalize_turn import finalize_turn
 from agent.nodes.init_turn import init_turn
-from agent.nodes.record_observation import record_observation
-from agent.nodes.route_agent_action import route_agent_action
-from agent.state import AgentState, ToolResult
+from agent.nodes.maybe_update_repo_state import maybe_update_repo_state
+from agent.nodes.model_step import model_step
+from agent.nodes.route_model_output import route_model_output
+from agent.state import AgentState
+from agent.tools.apply_patch import run_apply_patch
 from agent.tools.list_dir import run_list_dir
 from agent.tools.read_file import run_read_file
 from agent.tools.search_files import run_search_files
 from agent.tools.shell_command import run_shell_command
-from agent.tools.write_file import stage_write_file
-
-logger = get_logger(__name__)
 
 
-def _route_action(state: AgentState) -> str:
-    route = state["route"] or "finish"
-    logger.info("route_action turn=%s route=%s", state["turn_index"], route)
-    return route
-
-
-def _route_termination(state: AgentState) -> str:
-    route = "stop" if state["should_stop"] else "loop"
-    logger.info(
-        "route_termination turn=%s should_stop=%s route=%s reason=%r",
-        state["turn_index"],
-        state["should_stop"],
-        route,
-        state["stop_reason"],
-    )
-    return route
-
-
-def _block_write_file(state: AgentState) -> dict:
-    action = state["next_action"] or {}
-    raw_path = str(action.get("path", "")).strip() or "<unknown>"
-    result: ToolResult = {
-        "tool": "write_file",
-        "ok": False,
-        "summary": f"Blocked write to {raw_path} because writes are disabled",
-        "input": {"path": raw_path},
-        "data": {"path": raw_path},
-        "error": "write_file is disabled for this run",
-    }
-    return {
-        "pending_write_path": None,
-        "pending_write_content": None,
-        "last_tool_result": result,
-        "should_stop": True,
-        "stop_reason": "write_blocked",
-    }
+def _route_from_state(state: AgentState) -> str:
+    return state["route"] or "finalize_turn"
 
 
 def build_graph(*, allow_writes: bool = True):
-    logger.info("build_graph allow_writes=%s", allow_writes)
     graph = StateGraph(AgentState)
-    write_file_node = stage_write_file if allow_writes else _block_write_file
 
     graph.add_node("init_turn", init_turn)
-    graph.add_node("build_agent_context", build_agent_context)
-    graph.add_node("agent_decide", agent_decide)
-    graph.add_node("route_agent_action", route_agent_action)
+    graph.add_node("build_turn_context", build_turn_context)
+    graph.add_node("build_prompt_and_tools", build_prompt_and_tools)
+    graph.add_node("model_step", model_step)
+    graph.add_node("route_model_output", route_model_output)
     graph.add_node("shell_command", run_shell_command)
     graph.add_node("read_file", run_read_file)
     graph.add_node("list_dir", run_list_dir)
     graph.add_node("search_files", run_search_files)
-    graph.add_node("write_file", write_file_node)
-    graph.add_node("record_observation", record_observation)
-    graph.add_node("check_termination", check_termination)
-    graph.add_node("finalize_answer", finalize_answer)
+    graph.add_node("apply_patch", run_apply_patch)
+    graph.add_node("append_tool_result", append_tool_result)
+    graph.add_node("maybe_update_repo_state", maybe_update_repo_state)
+    graph.add_node("finalize_turn", finalize_turn)
 
-    # The graph always starts by resetting the agent's working state.
     graph.add_edge(START, "init_turn")
-    
-    # build context from - repo path + request
-    graph.add_edge("init_turn", "build_agent_context")
+    graph.add_edge("init_turn", "build_turn_context")
+    graph.add_edge("build_turn_context", "build_prompt_and_tools")
+    graph.add_edge("build_prompt_and_tools", "model_step")
+    graph.add_edge("model_step", "route_model_output")
 
-    # Pass the built context and stored results from earlier tool calls into agent_decide.
-    graph.add_edge("build_agent_context", "agent_decide")
-
-    # Parse the decision and route to the right tool
-    graph.add_edge("agent_decide", "route_agent_action")
-    
     graph.add_conditional_edges(
-        "route_agent_action",
-        _route_action,
+        "route_model_output",
+        _route_from_state,
         {
             "shell_command": "shell_command",
             "read_file": "read_file",
             "list_dir": "list_dir",
             "search_files": "search_files",
-            "write_file": "write_file",
-            "finish": "check_termination",
+            "apply_patch": "apply_patch",
+            "finalize_turn": "finalize_turn",
         },
     )
 
-    # Route back from the tool after execution to the record observation
-    graph.add_edge("shell_command", "record_observation")
-    graph.add_edge("read_file", "record_observation")
-    graph.add_edge("list_dir", "record_observation")
-    graph.add_edge("search_files", "record_observation")
-    graph.add_edge("write_file", "record_observation")
-    graph.add_edge("record_observation", "check_termination")
+    graph.add_edge("shell_command", "append_tool_result")
+    graph.add_edge("read_file", "append_tool_result")
+    graph.add_edge("list_dir", "append_tool_result")
+    graph.add_edge("search_files", "append_tool_result")
+    graph.add_edge("apply_patch", "append_tool_result")
 
-    graph.add_conditional_edges(
-        "check_termination",
-        _route_termination,
-        {
-            "loop": "agent_decide",
-            "stop": "finalize_answer",
-        },
-    )
-
-    if allow_writes:
-        graph.add_node("apply_file_write", apply_file_write)
-        graph.add_edge("finalize_answer", "apply_file_write")
-        graph.add_edge("apply_file_write", END)
-    else:
-        graph.add_edge("finalize_answer", END)
+    graph.add_edge("append_tool_result", "maybe_update_repo_state")
+    graph.add_edge("maybe_update_repo_state", "build_turn_context")
+    graph.add_edge("finalize_turn", END)
 
     return graph.compile()

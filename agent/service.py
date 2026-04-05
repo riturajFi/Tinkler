@@ -6,8 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from agent.observability import get_logger
-from agent.prompts.system_prompt import ALL_ACTIONS
-from agent.state import ActionKind, create_initial_state
+from agent.prompts.system_prompt import ALL_TOOLS
+from agent.state import ToolName, create_initial_state
 
 logger = get_logger(__name__)
 
@@ -55,7 +55,8 @@ class AgentRun:
     stop_reason: str | None
     turn_count: int
     tool_trace: list[str]
-    pending_write_path: str | None
+    changed_files: list[str]
+    pending_write_path: str | None = None
 
 
 def build_analysis_request(
@@ -85,10 +86,10 @@ def _resolve_repo_root(repo: str | Path) -> Path:
     return root
 
 
-def _resolve_allowed_actions(allow_writes: bool) -> tuple[ActionKind, ...]:
+def _resolve_allowed_tools(allow_writes: bool) -> tuple[ToolName, ...]:
     if allow_writes:
-        return ALL_ACTIONS
-    return tuple(action for action in ALL_ACTIONS if action != "write_file")
+        return ALL_TOOLS
+    return tuple(tool for tool in ALL_TOOLS if tool != "apply_patch")
 
 
 def _create_default_model(model_name: str, temperature: float) -> Any:
@@ -103,34 +104,36 @@ def _build_graph(*, allow_writes: bool) -> Any:
     return build_graph(allow_writes=allow_writes)
 
 
-def _describe_action(action: dict[str, Any]) -> str:
-    kind = action.get("kind", "unknown")
-    if kind == "shell_command":
-        return f"shell `{action.get('command', '')}`"
-    if kind == "read_file":
+def _describe_tool_call(tool_name: str, args: dict[str, Any]) -> str:
+    if tool_name == "shell_command":
+        return f"shell `{args.get('command', '')}` in {args.get('workdir', '.')}"
+    if tool_name == "read_file":
         return (
-            f"read {action.get('path', '?')}:"
-            f"{action.get('start_line', 1)}-{action.get('end_line', 1)}"
+            f"read {args.get('path', '?')}:"
+            f"{args.get('start_line', 1)}-{args.get('end_line', 1)}"
         )
-    if kind == "list_dir":
-        return f"list {action.get('path', '.') or '.'} depth={action.get('max_depth', 2)}"
-    if kind == "search_files":
-        return f"search {action.get('path', '.') or '.'} for {action.get('query', '')!r}"
-    if kind == "write_file":
-        return f"write {action.get('path', '?')}"
-    return "finish"
+    if tool_name == "list_dir":
+        return f"list {args.get('path', '.') or '.'} depth={args.get('max_depth', 2)}"
+    if tool_name == "search_files":
+        return (
+            f"search {args.get('path', '.') or '.'} "
+            f"mode={args.get('mode', 'content')} for {args.get('pattern', '')!r}"
+        )
+    if tool_name == "apply_patch":
+        return "apply_patch"
+    return tool_name
 
 
 def _build_tool_trace(tool_history: list[dict[str, Any]]) -> list[str]:
     trace: list[str] = []
-    for entry in tool_history:
-        turn = entry.get("turn", "?")
-        action = _describe_action(entry.get("action", {}))
-        result = entry.get("result", {})
-        status = "ok" if result.get("ok") else "error"
-        summary = str(result.get("summary", "")).strip()
+    for index, entry in enumerate(tool_history, start=1):
+        tool_name = str(entry.get("tool_name", "unknown"))
+        args = dict(entry.get("args", {}))
+        action = _describe_tool_call(tool_name, args)
+        status = "ok" if entry.get("ok") else "error"
+        summary = str(entry.get("result", "")).strip()
         suffix = f" -> {summary}" if summary else ""
-        trace.append(f"{turn}. {action} [{status}]{suffix}")
+        trace.append(f"{index}. {action} [{status}]{suffix}")
     return trace
 
 
@@ -169,42 +172,42 @@ def run_agent(
         repo_root=str(repo_root),
         max_turns=max_turns,
     )
-    # LangGraph's recursion limit counts graph transitions, not agent turns.
-    # A single turn spans multiple nodes, so scale the limit from max_turns.
     recursion_limit = max(25, max_turns * 8)
+    allowed_tools = _resolve_allowed_tools(allow_writes)
     result = graph.invoke(
         state,
         config={
             "recursion_limit": recursion_limit,
             "configurable": {
                 "model": model,
-                "allowed_actions": _resolve_allowed_actions(allow_writes),
+                "allowed_tools": allowed_tools,
             },
         },
     )
     logger.info(
-        "run_agent end repo=%s turns=%s stop_reason=%r pending_write=%r",
+        "run_agent end repo=%s turns=%s stop_reason=%r changed_files=%r",
         repo_root,
-        result.get("turn_index"),
+        result.get("turn_count"),
         result.get("stop_reason"),
-        result.get("pending_write_path"),
+        result.get("changed_files"),
     )
 
-    pending_write_path = result.get("pending_write_path")
-    if not allow_writes and pending_write_path:
-        raise RuntimeError("Read-only run unexpectedly staged a file write.")
+    changed_files = list(result.get("changed_files", []))
+    if not allow_writes and changed_files:
+        raise RuntimeError("Read-only run unexpectedly changed files.")
 
-    tool_history = result.get("tool_history", [])
+    tool_history = list(result.get("tool_history", []))
     return AgentRun(
         repo_root=repo_root,
         request=request,
-        response=str(result.get("final_response", "")).strip(),
+        response=str(result.get("final_answer", "")).strip(),
         model_name=resolved_model_name,
         max_turns=max_turns,
         stop_reason=result.get("stop_reason"),
-        turn_count=int(result.get("turn_index", 0)),
+        turn_count=int(result.get("turn_count", 0)),
         tool_trace=_build_tool_trace(tool_history),
-        pending_write_path=pending_write_path,
+        changed_files=changed_files,
+        pending_write_path=changed_files[0] if changed_files else None,
     )
 
 

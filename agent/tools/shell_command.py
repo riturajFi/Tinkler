@@ -1,86 +1,97 @@
 from __future__ import annotations
 
-import shlex
 import subprocess
+from pathlib import Path
 
 from agent.observability import get_logger, log_node_end, log_node_start
-from agent.state import AgentState, ToolResult
+from agent.policies.command_policy import validate_command
+from agent.policies.truncation import truncate_text
+from agent.state import AgentState, ToolExecutionResult
 
-ALLOWED_COMMANDS = {"pwd", "ls", "find", "rg", "git", "cat", "sed", "head", "tail", "wc", "tree"}
-SAFE_GIT_SUBCOMMANDS = {"status", "log", "rev-parse", "branch", "remote", "show", "ls-files", "diff"}
-OUTPUT_LIMIT = 6000
+OUTPUT_LIMIT = 8000
 
 logger = get_logger(__name__)
 
 
-def _truncate(text: str, limit: int = OUTPUT_LIMIT) -> str:
-    if len(text) <= limit:
-        return text
-    return f"{text[:limit]}\n... [truncated]"
-
-
-def _validate_command(command: str) -> list[str]:
-    tokens = shlex.split(command)
-    if not tokens:
-        raise ValueError("Shell command cannot be empty.")
-    root = tokens[0]
-    if root not in ALLOWED_COMMANDS:
-        raise ValueError(f"Unsupported shell command: {root}")
-    if root == "git":
-        if len(tokens) < 2 or tokens[1] not in SAFE_GIT_SUBCOMMANDS:
-            raise ValueError("Unsupported git subcommand.")
-    return tokens
+def _resolve_workdir(repo_root: str, raw_workdir: str) -> Path:
+    root = Path(repo_root).resolve()
+    candidate = Path(raw_workdir)
+    if not candidate.is_absolute():
+        candidate = (root / raw_workdir).resolve()
+    else:
+        candidate = candidate.resolve()
+    candidate.relative_to(root)
+    if not candidate.exists():
+        raise FileNotFoundError(f"Working directory not found: {raw_workdir}")
+    if not candidate.is_dir():
+        raise ValueError(f"Not a directory: {raw_workdir}")
+    return candidate
 
 
 def run_shell_command(state: AgentState) -> dict:
-    action = state["next_action"] or {}
-    command = str(action.get("command", "")).strip()
-    log_node_start(logger, "shell_command", state, command=command)
+    action = state["model_action"] or {}
+    args = dict(action.get("args") or {})
+    command = str(args.get("command", "")).strip()
+    raw_workdir = str(args.get("workdir", "")).strip()
+    timeout_ms = int(args.get("timeout_ms", 10000))
+    log_node_start(
+        logger,
+        "shell_command",
+        state,
+        command=command,
+        workdir=raw_workdir,
+        timeout_ms=timeout_ms,
+    )
 
     try:
-        tokens = _validate_command(command)
+        tokens = validate_command(command)
+        workdir = _resolve_workdir(state["repo_root"], raw_workdir)
         completed = subprocess.run(
             tokens,
-            cwd=state["repo_root"],
+            cwd=workdir,
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=max(1, timeout_ms / 1000),
             check=False,
         )
-        stdout = _truncate(completed.stdout.strip())
-        stderr = _truncate(completed.stderr.strip())
-        ok = completed.returncode == 0
-        logger.info(
-            "shell_command output command=%r returncode=%s stdout=%r stderr=%r",
-            command,
-            completed.returncode,
-            stdout,
-            stderr,
-        )
-        summary = stdout.splitlines()[0] if stdout else f"Command exited with {completed.returncode}"
-        result: ToolResult = {
-            "tool": "shell_command",
-            "ok": ok,
-            "summary": summary,
-            "input": {"command": command},
-            "data": {
+        stdout = completed.stdout.strip()
+        stderr = completed.stderr.strip()
+        combined_parts = []
+        if stdout:
+            combined_parts.append(stdout)
+        if stderr:
+            combined_parts.append(f"[stderr]\n{stderr}")
+        combined = "\n\n".join(combined_parts) or f"Command exited with {completed.returncode}"
+        result: ToolExecutionResult = {
+            "tool_name": "shell_command",
+            "args": {
+                "command": command,
+                "workdir": str(workdir),
+                "timeout_ms": timeout_ms,
+            },
+            "ok": completed.returncode == 0,
+            "result": stdout.splitlines()[0] if stdout else f"Command exited with {completed.returncode}",
+            "raw_output": truncate_text(combined, OUTPUT_LIMIT),
+            "exit_code": completed.returncode,
+            "metadata": {
                 "stdout": stdout,
                 "stderr": stderr,
-                "returncode": completed.returncode,
+                "workdir": str(workdir),
+                "command": command,
             },
         }
-        if not ok and stderr:
-            result["error"] = stderr
     except Exception as exc:
         result = {
-            "tool": "shell_command",
+            "tool_name": "shell_command",
+            "args": args,
             "ok": False,
-            "summary": str(exc),
-            "input": {"command": command},
-            "data": {},
-            "error": str(exc),
+            "result": str(exc),
+            "raw_output": str(exc),
+            "exit_code": None,
+            "metadata": {},
         }
 
-    state_update = {"last_tool_result": result}
-    log_node_end(logger, "shell_command", {**state, **state_update})
+    state_update = {"current_tool_result": result}
+    log_node_end(logger, "shell_command", {**state, **state_update}, ok=result.get("ok"))
     return state_update
+

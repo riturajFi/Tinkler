@@ -1,36 +1,28 @@
 from __future__ import annotations
 
+from typing import Any, Literal
+
 from pydantic import BaseModel, Field, model_validator
 
-from agent.state import ActionKind
+from agent.state import ToolName
 
 
-class AgentActionModel(BaseModel):
-    kind: ActionKind
-    command: str | None = None
-    path: str | None = None
-    query: str | None = None
-    max_depth: int | None = None
-    start_line: int | None = None
-    end_line: int | None = None
-    content: str | None = None
+class ModelActionModel(BaseModel):
+    type: Literal["tool_call", "final_answer"]
+    tool_name: ToolName | None = None
+    args: dict[str, Any] | None = None
+    message: str | None = Field(
+        default=None,
+        description="User-facing final answer when no more tool work is needed.",
+    )
 
     @model_validator(mode="after")
-    def validate_for_kind(self) -> "AgentActionModel":
-        if self.kind == "shell_command" and not self.command:
-            raise ValueError("shell_command requires command")
-        if self.kind in {"read_file", "write_file"} and not self.path:
-            raise ValueError(f"{self.kind} requires path")
-        if self.kind == "search_files" and not self.query:
-            raise ValueError("search_files requires query")
-        if self.kind == "write_file" and self.content is None:
-            raise ValueError("write_file requires content")
+    def validate_shape(self) -> "ModelActionModel":
+        if self.type == "tool_call":
+            if self.tool_name is None:
+                raise ValueError("tool_call requires tool_name")
+            if self.args is None:
+                raise ValueError("tool_call requires args")
+        if self.type == "final_answer" and not (self.message or "").strip():
+            raise ValueError("final_answer requires message")
         return self
-
-
-class DecisionModel(BaseModel):
-    summary: str = Field(
-        ...,
-        description="Current understanding of the repo and task in one or two sentences.",
-    )
-    action: AgentActionModel

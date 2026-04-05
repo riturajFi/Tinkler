@@ -2,59 +2,97 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from agent.state import ActionKind
+from agent.state import ToolName
 
-ALL_ACTIONS: tuple[ActionKind, ...] = (
+ALL_TOOLS: tuple[ToolName, ...] = (
     "shell_command",
     "read_file",
     "list_dir",
     "search_files",
-    "write_file",
-    "finish",
+    "apply_patch",
 )
 
+TOOL_SCHEMAS: dict[ToolName, dict[str, object]] = {
+    "shell_command": {
+        "name": "shell_command",
+        "description": "Run a bounded shell command for exploration, testing, or inspection.",
+        "args": {
+            "command": "str",
+            "workdir": "str",
+            "timeout_ms": "int",
+        },
+    },
+    "read_file": {
+        "name": "read_file",
+        "description": "Read a file or line range without shelling out.",
+        "args": {
+            "path": "str",
+            "start_line": "int | null",
+            "end_line": "int | null",
+        },
+    },
+    "list_dir": {
+        "name": "list_dir",
+        "description": "Inspect repository structure in a bounded way.",
+        "args": {
+            "path": "str",
+            "max_depth": "int",
+        },
+    },
+    "search_files": {
+        "name": "search_files",
+        "description": "Search file contents or file names. Prefer this over slower shell scans.",
+        "args": {
+            "pattern": "str",
+            "path": "str",
+            "mode": '"content" | "files"',
+        },
+    },
+    "apply_patch": {
+        "name": "apply_patch",
+        "description": "Apply Codex-style patches inside the same loop when file edits are needed.",
+        "args": {
+            "patch": "str",
+        },
+    },
+}
 
-def build_decision_system_prompt(
-    allowed_actions: Iterable[ActionKind] = ALL_ACTIONS,
-) -> str:
-    actions = tuple(dict.fromkeys(allowed_actions)) or ("finish",)
-    write_rule = (
-        "- Use write_file only when you have enough context to produce the requested file."
-        if "write_file" in actions
-        else "- File writes are disabled for this run."
+
+def build_tool_schemas(allowed_tools: Iterable[ToolName]) -> list[dict[str, object]]:
+    unique_tools = tuple(dict.fromkeys(allowed_tools))
+    return [TOOL_SCHEMAS[tool_name] for tool_name in unique_tools if tool_name in TOOL_SCHEMAS]
+
+
+def build_model_system_prompt(allowed_tools: Iterable[ToolName]) -> str:
+    tools = tuple(dict.fromkeys(allowed_tools))
+    rendered_tools = "\n".join(f"- {tool}" for tool in tools) or "- none"
+    edit_rule = (
+        "- If files must change, use apply_patch inside the loop after you have enough context."
+        if "apply_patch" in tools
+        else "- File edits are disabled for this run."
     )
-    rendered_actions = "\n".join(f"- {action}" for action in actions)
-    return f"""You are a repo exploration agent running in a LangGraph loop.
+    return f"""You are a repository agent running in a single adaptive LangGraph loop.
 
-Follow this shape exactly:
-setup -> think -> act -> observe -> repeat -> finish
+Core loop:
+1. inspect the repo and current turn state
+2. choose exactly one next action
+3. if a tool is needed, call one tool
+4. after each tool result, decide the next best action
+5. stop only when the task is complete
 
 Rules:
-- Choose exactly one next action.
-- Adapt after every observation.
-- Prefer the smallest action that unlocks the next durable fact.
-- Build durable repo facts from the observed outputs.
-- Prefer list_dir, read_file, and search_files over shell_command when they fit.
-- Use finish as soon as the user's request can already be answered from the gathered facts.
-{write_rule}
-- Use finish only when the task is complete or the loop should stop.
-- Do not output a multi-step plan.
-- Do not repeat the same action if it is not adding new information.
-- Treat recent_tool_history as ground truth for what was already tried. Do not re-run the same action on the same target unless you need different granularity and that need is supported by the current state.
-- Choose only from the available actions below.
+- Inspect the repo before making changes.
+- Prefer rg-backed search for discovery.
+- Read only useful files and the smallest useful slices.
+- Always use workdir for shell commands.
+- Do not use cd unless there is no reasonable alternative.
+- Gather enough context before editing.
+- Continue until the task is complete.
+- Return exactly one structured action.
+- Use final_answer only when no more tool work is needed.
+- Do not invent tool results.
+{edit_rule}
 
-Available actions:
-{rendered_actions}
-
-Return structured output only."""
-
-
-DECISION_SYSTEM_PROMPT = build_decision_system_prompt()
-
-FINALIZE_SYSTEM_PROMPT = """You are finalizing a LangGraph repo agent run.
-
-Write a concise user-facing summary based only on the gathered state.
-- If a file write is pending, mention the path and what will be written.
-- If the loop stopped because of max turns or repetition, say that plainly.
-- Do not invent facts.
+Available tools:
+{rendered_tools}
 """

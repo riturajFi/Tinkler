@@ -40,11 +40,11 @@ class TinklerCliTests(unittest.TestCase):
 
     def test_run_analysis_passes_read_only_allowed_actions(self):
         fake_result = {
-            "final_response": "Repository summary",
+            "final_answer": "Repository summary",
             "stop_reason": "agent_finished",
-            "turn_index": 2,
+            "turn_count": 2,
             "tool_history": [],
-            "pending_write_path": None,
+            "changed_files": [],
         }
         fake_graph = _FakeGraph(fake_result)
 
@@ -56,33 +56,34 @@ class TinklerCliTests(unittest.TestCase):
                 graph=fake_graph,
             )
 
-        allowed_actions = fake_graph.received_config["configurable"]["allowed_actions"]
-        self.assertNotIn("write_file", allowed_actions)
-        self.assertIn("finish", allowed_actions)
+        allowed_tools = fake_graph.received_config["configurable"]["allowed_tools"]
+        self.assertNotIn("apply_patch", allowed_tools)
+        self.assertIn("shell_command", allowed_tools)
 
     def test_parser_uses_analyze_defaults(self):
         parser = build_parser()
-        args = parser.parse_args(["analyze", "/tmp/repo"])
+        args = parser.parse_args(["--cwd", "/tmp/repo"])
 
-        self.assertEqual(args.command, "analyze")
-        self.assertEqual(args.focus, "overview")
-        self.assertEqual(args.max_turns, 12)
+        self.assertIsNone(args.request)
+        self.assertEqual(args.cwd, "/tmp/repo")
+        self.assertEqual(args.max_turns, 30)
         self.assertFalse(args.trace)
         self.assertFalse(args.json_output)
 
     def test_run_analysis_uses_agent_service_request_and_graph(self):
         fake_result = {
-            "final_response": "Repository summary",
+            "final_answer": "Repository summary",
             "stop_reason": "agent_finished",
-            "turn_index": 2,
+            "turn_count": 2,
             "tool_history": [
                 {
-                    "turn": 1,
-                    "action": {"kind": "list_dir", "path": ".", "max_depth": 2},
-                    "result": {"ok": True, "summary": "Listed .: 1 dirs, 2 files"},
+                    "tool_name": "list_dir",
+                    "args": {"path": ".", "max_depth": 2},
+                    "result": "Listed .: 1 dirs, 2 files",
+                    "ok": True,
                 }
             ],
-            "pending_write_path": None,
+            "changed_files": [],
         }
         fake_graph = _FakeGraph(fake_result)
 
@@ -97,5 +98,5 @@ class TinklerCliTests(unittest.TestCase):
         self.assertEqual(run.response, "Repository summary")
         self.assertEqual(run.stop_reason, "agent_finished")
         self.assertIn("list . depth=2", run.tool_trace[0])
-        self.assertIn("Read-only mode", fake_graph.received_state["request"])
+        self.assertIn("Read-only mode", fake_graph.received_state["user_request"])
         self.assertEqual(fake_graph.received_state["repo_root"], str(Path(repo_dir).resolve()))
