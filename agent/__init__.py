@@ -3,10 +3,12 @@ from __future__ import annotations
 from typing import Any
 
 __all__ = [
+    "AgentEvent",
     "AgentRun",
     "build_analysis_request",
     "build_graph",
     "create_initial_state",
+    "iter_agent_events",
     "run_agent",
     "run_analysis",
 ]
@@ -36,6 +38,12 @@ def run_agent(*args: Any, **kwargs: Any):
     return _run_agent(*args, **kwargs)
 
 
+def iter_agent_events(*args: Any, **kwargs: Any):
+    from agent.service import iter_agent_events as _iter_agent_events
+
+    return _iter_agent_events(*args, **kwargs)
+
+
 def run_analysis(*args: Any, **kwargs: Any):
     from agent.service import run_analysis as _run_analysis
 
@@ -43,8 +51,8 @@ def run_analysis(*args: Any, **kwargs: Any):
 
 
 def __getattr__(name: str):
-    if name == "AgentRun":
-        from agent.service import AgentRun
+    if name in {"AgentRun", "AgentEvent"}:
+        from agent.service import AgentEvent, AgentRun
 
-        return AgentRun
+        return {"AgentRun": AgentRun, "AgentEvent": AgentEvent}[name]
     raise AttributeError(name)

@@ -3,7 +3,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
+from uuid import uuid4
 
 from agent.observability import get_logger
 from agent.prompts.system_prompt import ALL_TOOLS
@@ -57,6 +58,17 @@ class AgentRun:
     tool_trace: list[str]
     changed_files: list[str]
     pending_write_path: str | None = None
+
+
+@dataclass(slots=True)
+class AgentEvent:
+    type: str
+    run_id: str
+    sequence: int
+    turn_count: int
+    max_turns: int
+    payload: dict[str, Any]
+    node: str | None = None
 
 
 def build_analysis_request(
@@ -137,17 +149,17 @@ def _build_tool_trace(tool_history: list[dict[str, Any]]) -> list[str]:
     return trace
 
 
-def run_agent(
+def _create_runtime(
     repo: str | Path,
     *,
     request: str,
-    max_turns: int = 100,
-    model_name: str | None = None,
-    temperature: float = 0.0,
-    model: Any | None = None,
-    graph: Any | None = None,
-    allow_writes: bool = True,
-) -> AgentRun:
+    max_turns: int,
+    model_name: str | None,
+    temperature: float,
+    model: Any | None,
+    graph: Any | None,
+    allow_writes: bool,
+) -> tuple[Path, str, Any, Any, dict[str, Any], dict[str, Any]]:
     repo_root = _resolve_repo_root(repo)
     resolved_model_name = model_name or os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
     if not request.strip():
@@ -174,28 +186,25 @@ def run_agent(
     )
     recursion_limit = max(25, max_turns * 8)
     allowed_tools = _resolve_allowed_tools(allow_writes)
-    result = graph.invoke(
-        state,
-        config={
-            "recursion_limit": recursion_limit,
-            "configurable": {
-                "model": model,
-                "allowed_tools": allowed_tools,
-            },
+    config = {
+        "recursion_limit": recursion_limit,
+        "configurable": {
+            "model": model,
+            "allowed_tools": allowed_tools,
         },
-    )
-    logger.info(
-        "run_agent end repo=%s turns=%s stop_reason=%r changed_files=%r",
-        repo_root,
-        result.get("turn_count"),
-        result.get("stop_reason"),
-        result.get("changed_files"),
-    )
+    }
+    return repo_root, resolved_model_name, graph, state, config, {"allow_writes": allow_writes}
 
+
+def _build_agent_run(
+    *,
+    repo_root: Path,
+    request: str,
+    resolved_model_name: str,
+    max_turns: int,
+    result: dict[str, Any],
+) -> AgentRun:
     changed_files = list(result.get("changed_files", []))
-    if not allow_writes and changed_files:
-        raise RuntimeError("Read-only run unexpectedly changed files.")
-
     tool_history = list(result.get("tool_history", []))
     return AgentRun(
         repo_root=repo_root,
@@ -208,6 +217,194 @@ def run_agent(
         tool_trace=_build_tool_trace(tool_history),
         changed_files=changed_files,
         pending_write_path=changed_files[0] if changed_files else None,
+    )
+
+
+def _build_event(
+    *,
+    event_type: str,
+    run_id: str,
+    sequence: int,
+    state: dict[str, Any],
+    payload: dict[str, Any],
+    node: str | None = None,
+) -> AgentEvent:
+    return AgentEvent(
+        type=event_type,
+        run_id=run_id,
+        sequence=sequence,
+        turn_count=int(state.get("turn_count", 0)),
+        max_turns=int(state.get("max_turns", 0)),
+        payload=payload,
+        node=node,
+    )
+
+
+def _next_sequence(sequence: int) -> int:
+    return sequence + 1
+
+
+def iter_agent_events(
+    repo: str | Path,
+    *,
+    request: str,
+    max_turns: int = 100,
+    model_name: str | None = None,
+    temperature: float = 0.0,
+    model: Any | None = None,
+    graph: Any | None = None,
+    allow_writes: bool = True,
+) -> Iterator[AgentEvent]:
+    repo_root, resolved_model_name, graph, state, config, options = _create_runtime(
+        repo,
+        request=request,
+        max_turns=max_turns,
+        model_name=model_name,
+        temperature=temperature,
+        model=model,
+        graph=graph,
+        allow_writes=allow_writes,
+    )
+    run_id = uuid4().hex
+    sequence = 0
+    current_state: dict[str, Any] = dict(state)
+    sequence = _next_sequence(sequence)
+    yield _build_event(
+        event_type="run.started",
+        run_id=run_id,
+        sequence=sequence,
+        state=current_state,
+        payload={
+            "repo_root": str(repo_root),
+            "request": request,
+            "model": resolved_model_name,
+            "allow_writes": options["allow_writes"],
+        },
+    )
+
+    tool_nodes = {"shell_command", "read_file", "list_dir", "search_files", "apply_patch"}
+
+    try:
+        for update in graph.stream(state, config=config):
+            for node_name, node_update in update.items():
+                current_state.update(node_update)
+                sequence = _next_sequence(sequence)
+                yield _build_event(
+                    event_type="loop.progress",
+                    run_id=run_id,
+                    sequence=sequence,
+                    state=current_state,
+                    node=node_name,
+                    payload={
+                        "node": node_name,
+                        "done": bool(current_state.get("done", False)),
+                        "stop_reason": current_state.get("stop_reason"),
+                        "last_tool_name": current_state.get("last_tool_name"),
+                    },
+                )
+
+                if node_name == "model_step":
+                    action = dict(current_state.get("model_action") or {})
+                    sequence = _next_sequence(sequence)
+                    yield _build_event(
+                        event_type="model.action",
+                        run_id=run_id,
+                        sequence=sequence,
+                        state=current_state,
+                        node=node_name,
+                        payload={"action": action},
+                    )
+                    continue
+
+                if node_name in tool_nodes:
+                    result = dict(current_state.get("current_tool_result") or {})
+                    if result:
+                        sequence = _next_sequence(sequence)
+                        yield _build_event(
+                            event_type="tool.result",
+                            run_id=run_id,
+                            sequence=sequence,
+                            state=current_state,
+                            node=node_name,
+                            payload=result,
+                        )
+                    continue
+
+                if node_name == "finalize_turn":
+                    run = _build_agent_run(
+                        repo_root=repo_root,
+                        request=request,
+                        resolved_model_name=resolved_model_name,
+                        max_turns=max_turns,
+                        result=current_state,
+                    )
+                    sequence = _next_sequence(sequence)
+                    yield _build_event(
+                        event_type="run.completed",
+                        run_id=run_id,
+                        sequence=sequence,
+                        state=current_state,
+                        node=node_name,
+                        payload={
+                            "response": run.response,
+                            "stop_reason": run.stop_reason,
+                            "turn_count": run.turn_count,
+                            "tool_trace": run.tool_trace,
+                            "changed_files": run.changed_files,
+                        },
+                    )
+    except Exception as exc:
+        current_state["stop_reason"] = "run_failed"
+        sequence = _next_sequence(sequence)
+        yield _build_event(
+            event_type="run.failed",
+            run_id=run_id,
+            sequence=sequence,
+            state=current_state,
+            payload={"error": str(exc)},
+        )
+        logger.exception("iter_agent_events failed repo=%s", repo_root)
+
+
+def run_agent(
+    repo: str | Path,
+    *,
+    request: str,
+    max_turns: int = 100,
+    model_name: str | None = None,
+    temperature: float = 0.0,
+    model: Any | None = None,
+    graph: Any | None = None,
+    allow_writes: bool = True,
+) -> AgentRun:
+    repo_root, resolved_model_name, graph, state, config, options = _create_runtime(
+        repo,
+        request=request,
+        max_turns=max_turns,
+        model_name=model_name,
+        temperature=temperature,
+        model=model,
+        graph=graph,
+        allow_writes=allow_writes,
+    )
+    result = graph.invoke(state, config=config)
+    logger.info(
+        "run_agent end repo=%s turns=%s stop_reason=%r changed_files=%r",
+        repo_root,
+        result.get("turn_count"),
+        result.get("stop_reason"),
+        result.get("changed_files"),
+    )
+
+    changed_files = list(result.get("changed_files", []))
+    if not options["allow_writes"] and changed_files:
+        raise RuntimeError("Read-only run unexpectedly changed files.")
+    return _build_agent_run(
+        repo_root=repo_root,
+        request=request,
+        resolved_model_name=resolved_model_name,
+        max_turns=max_turns,
+        result=result,
     )
 
 
